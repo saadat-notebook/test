@@ -1,0 +1,95 @@
+# Name of the GitHub Action
+name: Deploy New APK and Build Update JSON
+
+# This action runs automatically whenever a new release is 'published'
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # Step 1: Check out the 'main' branch
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      # Step 2: Download the APK from the release
+      - name: Download release asset (app-release.apk)
+        uses: robinraju/release-downloader@v1.9
+        with:
+          repository: ${{ github.repository }}
+          tag: ${{ github.ref_name }}
+          fileName: "app-release.apk"
+          target: "downloads/"
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      # Step 3: Set up Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Step 4: [MODIFIED] Run a script to update BOTH apk-info.json AND version-check.json
+      - name: Update JSON files using Node.js
+        env:
+          RELEASE_NOTES: ${{ github.event.release.body }}
+        run: |
+          const fs = require('fs');
+
+          // --- Part 1: Update apk-info.json (for your webpage) ---
+          const apkInfoPath = './apk-info.json';
+          const apkPath = './downloads/app-release.apk';
+          
+          const stats = fs.statSync(apkPath);
+          const fileSizeInMB = (stats.size / (1024 * 1024)).toFixed(1);
+          
+          const versionName = "${{ github.ref_name }}".replace('v', '');
+          const today = new Date().toISOString().slice(0, 10);
+          
+          const webInfo = {
+            version: versionName,
+            update_date: today,
+            size: `${fileSizeInMB} MB`,
+            apk_url: `./downloads/app-release.apk`
+          };
+          fs.writeFileSync(apkInfoPath, JSON.stringify(webInfo, null, 2));
+          console.log(`Updated ${apkInfoPath} for webpage.`);
+
+          // --- Part 2: Create/Update version-check.json (for your Android app) ---
+          const appCheckPath = './version-check.json';
+          
+          // Increment the versionCode
+          const versionCodePath = './versionCode.txt';
+          let currentVersionCode = parseInt(fs.readFileSync(versionCodePath, 'utf8'), 10);
+          let newVersionCode = currentVersionCode + 1;
+          fs.writeFileSync(versionCodePath, newVersionCode.toString());
+
+          // Get the release notes from the environment variable
+          const releaseNotes = process.env.RELEASE_NOTES || "General improvements and bug fixes.";
+
+          // Construct the direct download URL for the APK
+          const downloadUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/raw/main/downloads/app-release.apk`;
+          
+          const appCheckInfo = {
+            versionCode: newVersionCode,
+            versionName: versionName,
+            downloadUrl: downloadUrl,
+            whatsNew: releaseNotes
+          };
+          fs.writeFileSync(appCheckPath, JSON.stringify(appCheckInfo, null, 4)); // 4 spaces for readability
+          console.log(`Updated ${appCheckPath} for app update check.`);
+        shell: node {0}
+
+      # Step 5: Commit all updated files back to the 'main' branch
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(release): Auto-update APK and JSON files to version ${{ github.ref_name }}"
+          # We now commit 4 files: the APK, the webpage JSON, the app check JSON, and the incremented versionCode
+          file_pattern: "downloads/app-release.apk apk-info.json version-check.json versionCode.txt"
