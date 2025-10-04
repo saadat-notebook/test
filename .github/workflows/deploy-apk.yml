@@ -1,4 +1,3 @@
-# Name of the GitHub Action
 name: Deploy New APK and Update JSON
 
 on:
@@ -20,34 +19,33 @@ jobs:
       - name: Clean up old APKs
         run: find downloads -type f -name "*.apk" -delete
 
-      - name: Download release asset (*.apk)
-        uses: robinraju/release-downloader@v1.9
-        with:
-          repository: ${{ github.repository }}
-          tag: ${{ github.ref_name }}
-          fileName: "*.apk"
-          target: "downloads/"
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      # --- NEW VERIFICATION STEP ---
-      # This step checks if the download was successful before proceeding.
-      - name: Verify APK download
+      # --- NEW AND IMPROVED DOWNLOAD STEP ---
+      # This step uses the GitHub API directly to find and download the APK.
+      - name: Download APK from release assets
         run: |
-          # List the contents of the downloads directory for debugging purposes
-          echo "Contents of downloads/ directory:"
-          ls -l downloads/
-          
-          # Check if exactly one .apk file exists. If not, fail the workflow.
-          if [ $(find downloads -type f -name "*.apk" | wc -l) -ne 1 ]; then
-            echo "Error: APK file was not found in release assets or more than one was found."
+          # Use the GitHub API to get the download URL for the asset ending in .apk
+          # The GITHUB_TOKEN is automatically available to the workflow
+          APK_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.ref_name }}" | \
+            jq -r '.assets[] | select(.name | endswith(".apk")) | .browser_download_url')
+
+          # Check if the URL was found. If not, fail the job.
+          if [ -z "$APK_URL" ]; then
+            echo "Error: Could not find an APK asset in the release."
             exit 1
           fi
-          echo "APK successfully found."
+          
+          echo "Found APK URL: $APK_URL"
+          
+          # Download the asset using the URL
+          # The '-L' flag follows redirects, which is important for GitHub downloads
+          curl -L -o "downloads/app-release-${{ github.ref_name }}.apk" "$APK_URL"
+          
+          echo "Successfully downloaded APK."
 
-      - name: Rename APK with version tag
-        run: |
-          mv downloads/*.apk downloads/app-release-${{ github.ref_name }}.apk
-          echo "Renamed APK to app-release-${{ github.ref_name }}.apk"
+      # --- NO LONGER NEEDED ---
+      # The download step now saves the file with the correct name directly,
+      # so we can remove the separate "Rename APK" and "Verify" steps.
 
       # The rest of the workflow remains the same...
       - name: Setup Node.js
@@ -65,6 +63,13 @@ jobs:
           const newApkFilename = process.env.NEW_APK_FILENAME;
           const apkInfoPath = './apk-info.json';
           const apkPath = `./downloads/${newApkFilename}`;
+          
+          // Add a check to ensure the file exists before reading its stats
+          if (!fs.existsSync(apkPath)) {
+            console.error(`Error: The file ${apkPath} does not exist.`);
+            process.exit(1);
+          }
+
           const stats = fs.statSync(apkPath);
           const fileSizeInMB = (stats.size / (1024 * 1024)).toFixed(1);
           const versionName = "${{ github.ref_name }}".replace('v', '');
