@@ -1,6 +1,6 @@
 {
-    "versionCode": 20503,
-    "versionName": "2.5.3",
-    "downloadUrl": "https://raw.githubusercontent.com/saadat-notebook/test/main/downloads/app-release.apk",
-    "whatsNew": "- Fixed a bug in the swipe-to-refresh feature.\r\n- Improved session persistence on app close.\r\n- Added ability to save passwords to Google Password Manager."
+    "versionCode": 20600,
+    "versionName": "2.6.0",
+    "downloadUrl": "https://raw.githubusercontent.com/saadat-notebook/test/main/downloads/app-release-v2.6.0.apk",
+    "whatsNew": "-Name of the GitHub Action\r\nname: Deploy New APK and Update JSON"
 }
