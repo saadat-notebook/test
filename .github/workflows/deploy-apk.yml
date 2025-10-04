@@ -20,25 +20,36 @@ jobs:
       - name: Clean up old APKs
         run: find downloads -type f -name "*.apk" -delete
 
-      # --- MODIFIED STEP ---
-      # Now it downloads ANY .apk file from your release, not just one with a specific name.
       - name: Download release asset (*.apk)
         uses: robinraju/release-downloader@v1.9
         with:
           repository: ${{ github.repository }}
           tag: ${{ github.ref_name }}
-          fileName: "*.apk" # <-- This now uses a wildcard to find any .apk
+          fileName: "*.apk"
           target: "downloads/"
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- MODIFIED STEP ---
-      # Now it renames ANY .apk file it finds in the folder.
+      # --- NEW VERIFICATION STEP ---
+      # This step checks if the download was successful before proceeding.
+      - name: Verify APK download
+        run: |
+          # List the contents of the downloads directory for debugging purposes
+          echo "Contents of downloads/ directory:"
+          ls -l downloads/
+          
+          # Check if exactly one .apk file exists. If not, fail the workflow.
+          if [ $(find downloads -type f -name "*.apk" | wc -l) -ne 1 ]; then
+            echo "Error: APK file was not found in release assets or more than one was found."
+            exit 1
+          fi
+          echo "APK successfully found."
+
       - name: Rename APK with version tag
         run: |
-          # Find the downloaded .apk file (there should only be one) and rename it.
           mv downloads/*.apk downloads/app-release-${{ github.ref_name }}.apk
           echo "Renamed APK to app-release-${{ github.ref_name }}.apk"
 
+      # The rest of the workflow remains the same...
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -65,7 +76,6 @@ jobs:
             apk_url: `./downloads/${newApkFilename}`
           };
           fs.writeFileSync(apkInfoPath, JSON.stringify(webInfo, null, 2));
-          console.log(`Updated ${apkInfoPath} with new APK URL: ${webInfo.apk_url}`);
           const appCheckPath = './version-check.json';
           const versionParts = versionName.split('.').map(part => parseInt(part, 10));
           const generatedVersionCode = (versionParts[0] * 10000) + (versionParts[1] * 100) + (versionParts[2] || 0);
@@ -78,7 +88,6 @@ jobs:
             whatsNew: releaseNotes
           };
           fs.writeFileSync(appCheckPath, JSON.stringify(appCheckInfo, null, 4));
-          console.log(`Generated ${appCheckPath} with versionCode ${generatedVersionCode} and URL: ${downloadUrl}`);
         shell: node {0}
 
       - name: Commit and push changes
