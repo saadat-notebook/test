@@ -20,34 +20,27 @@ jobs:
           ref: main
 
       # Step 2: Download the APK from the release using a wildcard
-      - name: Download release asset (using wildcard)
+      # This step will now fail with a clear error if no .apk file is found in the release assets.
+      - name: Download release asset
         uses: robinraju/release-downloader@v1.9
         with:
           repository: ${{ github.repository }}
           tag: ${{ github.ref_name }}
-          # THIS IS THE FIX: It will now find ANY file ending with .apk
+          # Finds any file ending with .apk you've uploaded to the release
           fileName: "*.apk" 
-          # The target filename remains the same, ensuring consistency
+          # Makes the action fail if it cannot find an asset matching the fileName
+          fail-if-not-found: true
+          # Renames the downloaded file to a consistent, versioned format
           target: "downloads/app-release-${{ github.ref_name }}.apk"
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Step 3: Set up the Node.js environment
+      # Step 3: Set up the Node.js environment for our script
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # Step 4: Add a debug step to verify the file was downloaded (optional but helpful)
-      - name: Verify downloaded APK exists
-        run: |
-          echo "Checking contents of downloads directory:"
-          ls -lR downloads
-          if ! [ -f "downloads/app-release-${{ github.ref_name }}.apk" ]; then
-            echo "ERROR: The expected APK was not found after the download step!"
-            exit 1
-          fi
-
-      # Step 5: Run the updated Node.js script
+      # Step 4: Run the Node.js script to create/update all necessary JSON files
       - name: Update apk-info.json and version-check.json
         env:
           RELEASE_NOTES: ${{ github.event.release.body }}
@@ -56,6 +49,7 @@ jobs:
         run: |
           const fs = require('fs');
           const path = require('path');
+          
           const tag = process.env.RELEASE_TAG;
           const versionedApkName = `app-release-${tag}.apk`;
           const apkPath = path.join('./downloads', versionedApkName);
@@ -63,7 +57,7 @@ jobs:
           const appCheckPath = './version-check.json';
           
           if (!fs.existsSync(apkPath)) {
-            console.error(`ERROR: Versioned APK file not found at ${apkPath}.`);
+            console.error(`ERROR: Critical internal error. The APK was not found at ${apkPath} after the download step.`);
             process.exit(1);
           }
           
@@ -72,6 +66,7 @@ jobs:
           const versionName = tag.replace(/^v/, '');
           const today = new Date().toISOString().slice(0, 10);
           
+          // --- Update apk-info.json for the website ---
           const webInfo = {
             version: versionName,
             update_date: today,
@@ -81,6 +76,7 @@ jobs:
           fs.writeFileSync(apkInfoPath, JSON.stringify(webInfo, null, 2));
           console.log(`Updated ${apkInfoPath} to point to ${versionedApkName}.`);
 
+          // --- Update version-check.json for the app ---
           const versionParts = versionName.split('.').map(part => parseInt(part, 10));
           const generatedVersionCode = (versionParts[0] * 10000) + ((versionParts[1] || 0) * 100) + (versionParts[2] || 0);
           const releaseNotes = process.env.RELEASE_NOTES || "General improvements and bug fixes.";
@@ -96,9 +92,10 @@ jobs:
           console.log(`Generated ${appCheckPath} with versionCode ${generatedVersionCode}.`);
         shell: node {0}
 
-      # Step 6: Commit ALL the changes back to your 'main' branch
+      # Step 5: Commit the new APK and the updated JSON files back to your 'main' branch
       - name: Commit and push changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(release): Add APK and update JSON for version ${{ github.ref_name }}"
+          # This pattern dynamically includes the new versioned APK
           file_pattern: "downloads/app-release-${{ github.ref_name }}.apk apk-info.json version-check.json"
