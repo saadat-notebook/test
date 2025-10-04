@@ -1,7 +1,6 @@
 # Name of the GitHub Action
 name: Deploy New APK and Update JSON
 
-# This action runs automatically whenever a new release is 'published' on GitHub
 on:
   release:
     types: [published]
@@ -10,90 +9,68 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Crucial permission to allow the action to commit files back to your repo
+      contents: write
 
     steps:
-      # Step 1: Check out the 'main' branch of your repository
       - name: Checkout main branch
         uses: actions/checkout@v4
         with:
           ref: main
 
-      # NEW - Step 2: Clean up old APKs from the downloads folder
-      # This prevents the repo from storing every old version.
       - name: Clean up old APKs
-        run: |
-          # The find command safely deletes any files ending with .apk in the downloads folder.
-          # If no files are found, it does nothing and doesn't fail.
-          find downloads -type f -name "*.apk" -delete
-          echo "Old APKs cleaned up."
+        run: find downloads -type f -name "*.apk" -delete
 
-      # Step 3: Download the new APK from the release asset
-      # It still downloads the asset named 'app-release.apk' as before.
-      - name: Download release asset (app-release.apk)
+      # --- MODIFIED STEP ---
+      # Now it downloads ANY .apk file from your release, not just one with a specific name.
+      - name: Download release asset (*.apk)
         uses: robinraju/release-downloader@v1.9
         with:
           repository: ${{ github.repository }}
-          tag: ${{ github.ref_name }} # e.g., v2.5.3
-          fileName: "app-release.apk"
+          tag: ${{ github.ref_name }}
+          fileName: "*.apk" # <-- This now uses a wildcard to find any .apk
           target: "downloads/"
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # NEW - Step 4: Rename the APK file to include the version tag
+      # --- MODIFIED STEP ---
+      # Now it renames ANY .apk file it finds in the folder.
       - name: Rename APK with version tag
         run: |
-          mv downloads/app-release.apk downloads/app-release-${{ github.ref_name }}.apk
+          # Find the downloaded .apk file (there should only be one) and rename it.
+          mv downloads/*.apk downloads/app-release-${{ github.ref_name }}.apk
           echo "Renamed APK to app-release-${{ github.ref_name }}.apk"
 
-      # Step 5: Set up the Node.js environment
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # Step 6: Run the script to update JSON files with the new dynamic info
       - name: Update apk-info.json and version-check.json
         env:
-          # Pass the release notes and repo name as environment variables
           RELEASE_NOTES: ${{ github.event.release.body }}
           GITHUB_REPO: ${{ github.repository }}
-          # NEW: Pass the new, dynamic filename to the script!
           NEW_APK_FILENAME: "app-release-${{ github.ref_name }}.apk"
         run: |
           const fs = require('fs');
-          
-          // Use the environment variable for the filename
           const newApkFilename = process.env.NEW_APK_FILENAME;
           const apkInfoPath = './apk-info.json';
-          const apkPath = `./downloads/${newApkFilename}`; // <-- DYNAMIC PATH
-          
-          // --- Part A: Update apk-info.json (for your download webpage) ---
+          const apkPath = `./downloads/${newApkFilename}`;
           const stats = fs.statSync(apkPath);
           const fileSizeInMB = (stats.size / (1024 * 1024)).toFixed(1);
-          
           const versionName = "${{ github.ref_name }}".replace('v', '');
           const today = new Date().toISOString().slice(0, 10);
-          
           const webInfo = {
             version: versionName,
             update_date: today,
             size: `${fileSizeInMB} MB`,
-            apk_url: `./downloads/${newApkFilename}` // <-- DYNAMIC URL
+            apk_url: `./downloads/${newApkFilename}`
           };
           fs.writeFileSync(apkInfoPath, JSON.stringify(webInfo, null, 2));
           console.log(`Updated ${apkInfoPath} with new APK URL: ${webInfo.apk_url}`);
-
-          // --- Part B: Create/Update version-check.json (for your Android app) ---
           const appCheckPath = './version-check.json';
-          
           const versionParts = versionName.split('.').map(part => parseInt(part, 10));
           const generatedVersionCode = (versionParts[0] * 10000) + (versionParts[1] * 100) + (versionParts[2] || 0);
-
           const releaseNotes = process.env.RELEASE_NOTES || "General improvements and bug fixes.";
-
-          // Construct the permanent, raw download URL with the new dynamic filename
-          const downloadUrl = `https://raw.githubusercontent.com/${process.env.GITHUB_REPO}/main/downloads/${newApkFilename}`; // <-- DYNAMIC URL
-          
+          const downloadUrl = `https://raw.githubusercontent.com/${process.env.GITHUB_REPO}/main/downloads/${newApkFilename}`;
           const appCheckInfo = {
             versionCode: generatedVersionCode,
             versionName: versionName,
@@ -104,10 +81,8 @@ jobs:
           console.log(`Generated ${appCheckPath} with versionCode ${generatedVersionCode} and URL: ${downloadUrl}`);
         shell: node {0}
 
-      # Step 7: Commit ALL the changes back to your 'main' branch
       - name: Commit and push changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(release): Auto-update APK and JSON for version ${{ github.ref_name }}"
-          # UPDATED: Use a wildcard to handle the new APK name and the deletion of the old one
           file_pattern: "downloads/*.apk apk-info.json version-check.json"
