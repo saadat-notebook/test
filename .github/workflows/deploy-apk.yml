@@ -19,81 +19,106 @@ jobs:
         with:
           ref: main
 
-      # Step 2: Download the APK from the release you just published
-      # It finds the asset named 'app-release.apk' and places it in the 'downloads' folder.
+      # Step 2: NEW - Clean up old APKs to ensure only the latest one exists
+      # This keeps your 'downloads' directory from getting filled with old versions.
+      - name: Clean up old APKs
+        run: |
+          mkdir -p downloads
+          rm -f downloads/*.apk
+
+      # Step 3: Download the APK from the release you just published
+      # It still downloads as 'app-release.apk' into the 'downloads' folder.
       - name: Download release asset (app-release.apk)
         uses: robinraju/release-downloader@v1.9
         with:
           repository: ${{ github.repository }}
-          tag: ${{ github.ref_name }} # e.g., v2.5.3
+          tag: ${{ github.ref_name }} # e.g., v2.5.4
           fileName: "app-release.apk"
           target: "downloads/"
           token: ${{ secrets.GITHUB_TOKEN }} # An automatic token provided by GitHub
 
-      # Step 3: Set up the Node.js environment that our script will run in
+      # Step 4: NEW - Rename the APK to include the version tag
+      # This step takes the downloaded file and renames it.
+      # e.g., 'downloads/app-release.apk' -> 'downloads/app-release-v2.5.4.apk'
+      # It then saves the new filename to an environment variable for the next step to use.
+      - name: Rename APK with version tag
+        run: |
+          VERSION_TAG="${{ github.ref_name }}"
+          NEW_FILENAME="app-release-${VERSION_TAG}.apk"
+          mv downloads/app-release.apk "downloads/${NEW_FILENAME}"
+          echo "Generated new filename: ${NEW_FILENAME}"
+          echo "NEW_APK_FILENAME=${NEW_FILENAME}" >> $GITHUB_ENV
+
+      # Step 5: Set up the Node.js environment
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # Step 4: Run a powerful Node.js script to create/update all necessary files
+      # Step 6: UPDATED - Run Node.js script to update JSON files
+      # The script now uses the environment variable we created in the rename step.
       - name: Update apk-info.json and version-check.json
         env:
-          # This special variable captures the description/notes you write for the GitHub Release
           RELEASE_NOTES: ${{ github.event.release.body }}
-          GITHUB_REPO: ${{ github.repository }} # e.g., YourUsername/YourRepoName
+          GITHUB_REPO: ${{ github.repository }}
+          # Pass the new filename to the Node.js script
+          NEW_APK_FILENAME: ${{ env.NEW_APK_FILENAME }}
         run: |
           const fs = require('fs');
 
+          // The new filename is now passed in from the environment
+          const newApkFilename = process.env.NEW_APK_FILENAME;
+          if (!newApkFilename) {
+            console.error("Error: NEW_APK_FILENAME environment variable not set.");
+            process.exit(1);
+          }
+          
+          const apkPath = `./downloads/${newApkFilename}`;
+
           // --- Part A: Update apk-info.json (for your download webpage) ---
           const apkInfoPath = './apk-info.json';
-          const apkPath = './downloads/app-release.apk';
           
           const stats = fs.statSync(apkPath);
           const fileSizeInMB = (stats.size / (1024 * 1024)).toFixed(1);
           
-          const versionName = "${{ github.ref_name }}".replace('v', ''); // Removes the 'v' from 'v2.5.3' -> '2.5.3'
+          const versionName = "${{ github.ref_name }}".replace('v', '');
           const today = new Date().toISOString().slice(0, 10);
           
           const webInfo = {
             version: versionName,
             update_date: today,
             size: `${fileSizeInMB} MB`,
-            apk_url: `./downloads/app-release.apk`
+            apk_url: `./downloads/${newApkFilename}` // Use the new dynamic filename
           };
           fs.writeFileSync(apkInfoPath, JSON.stringify(webInfo, null, 2));
-          console.log(`Updated ${apkInfoPath} for your webpage.`);
+          console.log(`Updated ${apkInfoPath} to point to ${newApkFilename}`);
 
           // --- Part B: Create/Update version-check.json (for your Android app) ---
-          const appCheckPath = './version-check.json'; // Will be created in the root
+          const appCheckPath = './version-check.json';
           
-          // We will use the GitHub release tag for the versionCode. No need for a separate file.
-          // This assumes your tags are like v5, v6, etc., where the number is the versionCode.
-          // Or, for more complex versions, we'll derive it. For now, we'll use a smart approach.
-          // Example: v2.5.3 -> 20503. This is robust.
           const versionParts = versionName.split('.').map(part => parseInt(part, 10));
           const generatedVersionCode = (versionParts[0] * 10000) + (versionParts[1] * 100) + (versionParts[2] || 0);
 
-          // Get the release notes. If you didn't write any, it provides a default.
           const releaseNotes = process.env.RELEASE_NOTES || "General improvements and bug fixes.";
 
-          // Construct the permanent, raw download URL for the APK file on GitHub
-          const downloadUrl = `https://raw.githubusercontent.com/${process.env.GITHUB_REPO}/main/downloads/app-release.apk`;
+          // Construct the permanent, raw download URL with the new dynamic filename
+          const downloadUrl = `https://raw.githubusercontent.com/${process.env.GITHUB_REPO}/main/downloads/${newApkFilename}`;
           
           const appCheckInfo = {
             versionCode: generatedVersionCode,
             versionName: versionName,
-            downloadUrl: downloadUrl,
+            downloadUrl: downloadUrl, // Use the new dynamic download URL
             whatsNew: releaseNotes
           };
           fs.writeFileSync(appCheckPath, JSON.stringify(appCheckInfo, null, 4));
           console.log(`Generated ${appCheckPath} with versionCode ${generatedVersionCode}.`);
         shell: node {0}
 
-      # Step 5: Commit ALL the changes back to your 'main' branch
+      # Step 7: UPDATED - Commit ALL the changes back to your 'main' branch
+      # The file pattern is updated to use a wildcard to catch the newly named APK.
       - name: Commit and push changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(release): Auto-update APK and JSON for version ${{ github.ref_name }}"
-          # Tell the action which files have changed and need to be committed
-          file_pattern: "downloads/app-release.apk apk-info.json version-check.json"
+          # The wildcard '*.apk' will match whatever the new APK name is.
+          file_pattern: "downloads/*.apk apk-info.json version-check.json"
