@@ -18,19 +18,22 @@ jobs:
         with:
           ref: main
 
-      # Step 2: Download the release APK
-      - name: Download release asset (app-release.apk)
+      # Step 2: Download any APK from the release
+      - name: Download release asset (any .apk)
         uses: robinraju/release-downloader@v1.9
         with:
           repository: ${{ github.repository }}
           tag: ${{ github.ref_name }}
-          fileName: "app-release.apk"
+          fileName: "*.apk"   # download any APK file uploaded
           target: "downloads/"
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Step 3: Rename the APK with version tag
+      # Step 3: Rename APK with version
       - name: Rename APK with version
-        run: mv downloads/app-release.apk downloads/app-release-${{ github.ref_name }}.apk
+        run: |
+          FILE=$(ls downloads/*.apk | head -n 1)
+          echo "Found APK: $FILE"
+          mv "$FILE" "downloads/app-release-${{ github.ref_name }}.apk"
 
       # Step 4: Setup Node.js
       - name: Setup Node.js
@@ -47,7 +50,7 @@ jobs:
           node - <<'EOF'
           const fs = require('fs');
 
-          const tagName = "${{ github.ref_name }}"; // e.g. v2.5.3
+          const tagName = "${{ github.ref_name }}"; // e.g. v2.6.1
           const versionName = tagName.replace('v', '');
           const apkFileName = `app-release-${tagName}.apk`;
           const apkPath = `./downloads/${apkFileName}`;
