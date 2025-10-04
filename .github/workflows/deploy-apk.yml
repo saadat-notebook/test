@@ -38,12 +38,13 @@ jobs:
         with:
           node-version: '20'
 
-      # Step 5: Update JSON files
+      # Step 5: Update JSON files using Node.js
       - name: Update apk-info.json and version-check.json
         env:
           RELEASE_NOTES: ${{ github.event.release.body }}
           GITHUB_REPO: ${{ github.repository }}
         run: |
+          node - <<'EOF'
           const fs = require('fs');
 
           const tagName = "${{ github.ref_name }}"; // e.g. v2.5.3
@@ -82,6 +83,7 @@ jobs:
           };
           fs.writeFileSync(appCheckPath, JSON.stringify(appCheckInfo, null, 4));
           console.log(`Generated ${appCheckPath} with versionCode ${generatedVersionCode}.`);
+          EOF
 
       # Step 6: Commit and push changes
       - name: Commit and push changes
